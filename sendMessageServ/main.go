@@ -66,5 +66,5 @@ func main() {
 	cfg := *&configs{mongoConn: connMng, mongoColl: collectionMng}
 
 	http.HandleFunc("/", cfg.handler)
-	log.Fatal(http.ListenAndServe(":8091", nil))
+	log.Fatal(http.ListenAndServe(":8092", nil))
 }
