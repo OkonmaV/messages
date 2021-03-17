@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
 
-	"github.com/beevik/guid"
 	"github.com/big-larry/mgo"
 	"github.com/big-larry/mgo/bson"
 	utils "github.com/big-larry/suckutils"
@@ -17,17 +15,11 @@ type configs struct {
 	mongoColl    *mgo.Collection
 }
 type ChatInfo struct {
-	Id    string   `bson:"_id"`
-	Users []string `bson:"users"`
-	Name  string   `bson:"name"`
-	Type  string   `bson:"type"`
+	Id    bson.ObjectId `bson:"_id"`
+	Users []string      `bson:"users"`
+	Name  string        `bson:"name"`
+	Type  int           `bson:"type"`
 }
-
-type ChatCreatorAuthResp struct {
-	ownerHash string `json:"hash"`
-}
-
-var ctx = context.Background()
 
 func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 
@@ -46,7 +38,58 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 
 	switch chatType {
 	case "self":
-		//TODO
+
+		respAuth, err := http.Get(utils.ConcatTwo("http://www.URL-TO-AUTH.com/?jwt=", cookie.Value))
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		defer func() {
+			err := respAuth.Body.Close()
+			if err != nil {
+				fmt.Println(err) //todo
+				return
+			}
+		}()
+		if respAuth.StatusCode != 200 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		ownerHash := r.Form["hash"][0]
+
+		upsertData := bson.M{"$setOnInsert": bson.M{"users": ownerHash, "type": 0}}
+		upsertSelector := bson.M{"type": 0, "users": ownerHash}
+		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		if insertResult.UpsertedId == nil {
+			findResult := &ChatInfo{}
+			err = cfg.mongoColl.Find(bson.M{"type": 0, "users": ownerHash}).One(findResult)
+			if err != nil {
+				fmt.Println(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if findResult != nil {
+				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
+		if ok {
+			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+
 	case "group":
 
 		// --- START REQUEST TO AUTH ---
@@ -83,12 +126,12 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		if respAuth.StatusCode != 200 {
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		// --- END REQUEST TO AUTH ---
 
-		// --- HASH IN STRING IN BODY OF RESPONCE ---
+		// --- HASH IN BODY OF RESPONCE ---
 
 		/*	bytes, err := ioutil.ReadAll(respAuth.Body)
 			if err != nil {
@@ -112,22 +155,51 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 		ownerHash := r.Form["hash"][0]
 
 		// --- END OF KNOWING USER`S HASH ---
-		uuid := guid.New()
-		err = cfg.mongoColl.Insert(&ChatInfo{
-			Id:    uuid.String(),
-			Users: []string{ownerHash, r.Form["to"][0]},
-			Name:  r.Form["name"][0],
-			Type:  chatType})
+
+		chatName := r.Form["name"][0]
+
+		if chatName == "" {
+			chatName = "Group chat"
+		}
+
+		upsertData := bson.M{"$setOnInsert": bson.M{"users": ownerHash, "type": 2}}
+		upsertSelector := bson.M{"type": 2, "users.0": ownerHash, "name": chatName}
+		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
 		if err != nil {
 			fmt.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		w.Write([]byte(uuid.String())) // КУДА WRITE? КУДА WRITE ТО БЛТЬ?
+		if insertResult.UpsertedId == nil {
+			findResult := &ChatInfo{}
+			err = cfg.mongoColl.Find(bson.M{"type": 0, "users.0": ownerHash, "name": chatName}).One(findResult)
+			if err != nil {
+				fmt.Println(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if findResult != nil {
+				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
+		if ok {
+			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
 
 	case "ls":
 
+		secondUserHash := r.Form["to"][0]
+		if secondUserHash == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		// --- START REQUEST TO AUTH ---
 
 		// --- REQUEST TO AUTH WITH KOKI IN COOKIE ---
@@ -162,7 +234,7 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		if respAuth.StatusCode != 200 {
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		// --- END REQUEST TO AUTH ---
@@ -186,32 +258,43 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}*/
 
-		// --- HASH IN FORM IN MAIN REQUEST ---
+		// --- ¯\_(ツ)_/¯ ---
 
 		ownerHash := r.Form["hash"][0]
 
-		// END OF KNOWING USER`S HASH AND CHECKING HIS RIGHTS
+		// -----------
 
-		uniq, resChat, err := cfg.IsThisChatUnique(ownerHash, r.Form["to"][0])
+		upsertData := bson.M{"$setOnInsert": bson.M{"users": []string{ownerHash, secondUserHash}, "type": 1}}
+		upsertSelector := bson.M{"type": 1, "users": bson.M{"$all": []bson.M{{"$elemMatch": bson.M{"$eq": ownerHash}}, {"$elemMatch": bson.M{"$eq": secondUserHash}}}}}
+		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
 		if err != nil {
 			fmt.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if uniq {
-			uuid := guid.New()
-			resChat = &ChatInfo{
-				Id:    uuid.String(),
-				Users: []string{ownerHash, r.Form["to"][0]},
-				Type:  chatType}
-			err := cfg.mongoColl.Insert(resChat)
+
+		if insertResult.UpsertedId == nil {
+			findResult := &ChatInfo{}
+			err = cfg.mongoColl.Find(bson.M{"type": 1, "users": bson.M{"$all": []string{ownerHash, secondUserHash}}}).One(findResult)
 			if err != nil {
 				fmt.Println(err)
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
+			if findResult != nil {
+				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		w.Write([]byte(resChat.Id)) // КУДА WRITE? КУДА WRITE ТО БЛТЬ?
+
+		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
+		if ok {
+			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
 
 	default:
 		w.WriteHeader(http.StatusBadRequest)
@@ -220,32 +303,18 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	mngSession, err := mgo.Dial("127.0.0.1")
+	mongoSession, err := mgo.Dial("127.0.0.1")
 
 	if err != nil {
 		fmt.Println(err) //TODO
 		return
 	}
-	defer mngSession.Close()
+	defer mongoSession.Close()
 
-	mngCollection := mngSession.DB("main").C("chats")
+	mongoCollection := mongoSession.DB("main").C("chats")
 
-	cfg := *&configs{mongoSession: mngSession, mongoColl: mngCollection}
+	cfg := *&configs{mongoSession: mongoSession, mongoColl: mongoCollection}
 
 	http.HandleFunc("/", cfg.handler)
 	log.Fatal(http.ListenAndServe(":8091", nil))
-}
-
-func (cfg *configs) IsThisChatUnique(u1 string, u2 string) (bool, *ChatInfo, error) {
-	res := &ChatInfo{}
-	//var res []*ChatInfo maybe this
-	err := cfg.mongoColl.Find(bson.M{"users": []string{u1, u2}}).One(res)
-	if err != nil {
-		return false, nil, err
-	}
-	err = cfg.mongoColl.Find(bson.M{"users": []string{u2, u1}}).One(res)
-	if err != nil {
-		return false, nil, err
-	}
-	return res == nil, res, nil
 }

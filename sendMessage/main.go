@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,13 +18,11 @@ type configs struct {
 	clickhouseConn *clickhouse.Conn
 }
 type ChatInfo struct {
-	Id    string   `bson:"_id"`
-	Users []string `bson:"users"`
-	Name  string   `bson:"name"`
-	Type  string   `bson:"type"`
+	Id    bson.ObjectId `bson:"_id"`
+	Users []string      `bson:"users"`
+	Name  string        `bson:"name"`
+	Type  int           `bson:"type"`
 }
-
-var ctx = context.Background()
 
 func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 
@@ -60,7 +57,7 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if respAuth.StatusCode != 200 {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
@@ -106,6 +103,7 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
@@ -127,5 +125,3 @@ func main() {
 	http.HandleFunc("/", cfg.handler)
 	log.Fatal(http.ListenAndServe(":8092", nil))
 }
-
-//TODO: КАБЕЛЬ ПОИЩИ
