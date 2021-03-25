@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/big-larry/mgo"
@@ -23,8 +24,19 @@ type ChatInfo struct {
 
 func (handler *CreateChatHandler) Handle(r *suckhttp.Request) (*suckhttp.Response, error) {
 
-	//cookie := r.GetHeader(suckhttp.Cookie)
+	var token string
+	cookie := r.GetHeader(suckhttp.Cookie)
+	cookie = strings.ReplaceAll(cookie, " ", "")
+	cookieValues := strings.Split(cookie, ";")
+	for _, cv := range cookieValues {
+		i := strings.Index(cv, "=")
+		if name := cv[:i]; name == "token" {
+			token = cv[i+1:]
+			break
+		}
+	}
 	// десериализация кук?
+	println(token)
 
 	queryValues, err := url.ParseQuery(r.Uri.RawQuery)
 	if err != nil {
@@ -165,7 +177,7 @@ func main() {
 		<-logger.AllLogsFlushed
 	}()
 
-	handler, err := NewCreateChatHandler()
+	handler, err := NewCreateChatHandler("127.0.0.1")
 	if err != nil {
 		logger.Error("Mongo connection", err)
 		return
@@ -178,13 +190,16 @@ type CreateChatHandler struct {
 	mongoColl *mgo.Collection
 }
 
-func NewCreateChatHandler() (*CreateChatHandler, error) { // порнография?
-	mongoSession, err := mgo.Dial("127.0.0.1")
+func (handler *CreateChatHandler) Close() {
+	handler.mongoColl.Database.Session.Close()
+}
+
+func NewCreateChatHandler(connectionString string) (*CreateChatHandler, error) { // порнография?
+	mongoSession, err := mgo.Dial(connectionString)
 
 	if err != nil {
 		return nil, err
 	}
-	defer mongoSession.Close()
 
 	return &CreateChatHandler{mongoColl: mongoSession.DB("main").C("chats")}, nil
 }

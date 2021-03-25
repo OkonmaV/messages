@@ -1,8 +1,7 @@
 github.com/big-larry/mgo v1.0.0 h1:ChDAuPTDrsxTIiX6cpMKCSA/pwfDLUBLNKgrnFKMU3I=
 github.com/big-larry/mgo v1.0.0/go.mod h1:kdL246Gj/xmJ6cx/AP1QVLapNaOXCTKhsRmZTc2w33w=
+github.com/big-larry/suckhttp v0.0.0-20210322103127-398c10f2797b h1:AcX7AhJaYehbFWQPiLgpvzWyDqbw6lDeDx8/a96gu3w=
 github.com/big-larry/suckhttp v0.0.0-20210322103127-398c10f2797b/go.mod h1:lLWCbEUoHRIPsSlpsNlucyIvog1pNFb748VtfYC9PpQ=
-github.com/big-larry/suckhttp v1.0.4 h1:8C6EfNTYQpcsvgjbYHIvZ4JXdLUBBxhusVezwHXrGfw=
-github.com/big-larry/suckhttp v1.0.4/go.mod h1:lLWCbEUoHRIPsSlpsNlucyIvog1pNFb748VtfYC9PpQ=
 github.com/big-larry/suckutils v0.0.0-20210302144038-e59935e3f3e7 h1:ZcreHOZkl2SEdO4yckOhb14op1HiBPyLgpZCPGPpZTM=
 github.com/big-larry/suckutils v0.0.0-20210302144038-e59935e3f3e7/go.mod h1:k8OTvl7gpGqgnRZmwtKlrdPfauA0ATignnsQ/jtLHMk=
 github.com/dsnet/compress v0.0.1/go.mod h1:Aw8dCMJ7RioblQeTqt88akK31OvO8Dhf5JflhBbQEHo=
