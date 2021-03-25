@@ -33,12 +33,12 @@ func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	chatId := r.Form["chat"][0]
-	if len(chatId) != 24 {
+	if len(chatId) != 8 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	addedUserHash := r.Form["user"][0]
-	if len(addUserHash) != 32 {
+	if len(addedUserHash) != 32 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

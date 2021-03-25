@@ -1,320 +1,190 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/http"
+	"net/url"
+	"time"
 
 	"github.com/big-larry/mgo"
 	"github.com/big-larry/mgo/bson"
-	utils "github.com/big-larry/suckutils"
+	"github.com/big-larry/suckhttp"
+	"github.com/big-larry/suckutils"
+	"github.com/thin-peak/httpservice"
+	"github.com/thin-peak/logger"
 )
 
-type configs struct {
-	mongoSession *mgo.Session
-	mongoColl    *mgo.Collection
-}
+const thisServiceName = httpservice.ServiceName("CreateChat")
+
 type ChatInfo struct {
-	Id    bson.ObjectId `bson:"_id"`
-	Users []string      `bson:"users"`
-	Name  string        `bson:"name"`
-	Type  int           `bson:"type"`
+	Id    []byte   `bson:"_id"`
+	Users []string `bson:"users"`
+	Name  string   `bson:"name"`
+	Type  int      `bson:"type"`
 }
 
-func (cfg *configs) handler(w http.ResponseWriter, r *http.Request) {
+func (handler *CreateChatHandler) Handle(r *suckhttp.Request) (*suckhttp.Response, error) {
 
-	cookie, err := r.Cookie("koki")
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
+	//cookie := r.GetHeader(suckhttp.Cookie)
+	// десериализация кук?
 
-	err = r.ParseForm()
+	queryValues, err := url.ParseQuery(r.Uri.RawQuery)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return nil, err
 	}
-	chatType := r.Form["type"][0]
+	chatType := queryValues.Get("type")
 
 	switch chatType {
 	case "self":
 
-		respAuth, err := http.Get(utils.ConcatTwo("http://www.URL-TO-AUTH.com/?jwt=", cookie.Value))
+		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
+
+		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
+
+		uid := suckutils.GetRandUID(314)
+		change := mgo.Change{
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": ownerHash, "type": 0}},
+			Upsert:    true,
+			ReturnNew: false,
+			Remove:    false,
+		}
+		selector := &bson.M{"type": 0, "users": ownerHash}
+		foundChat := &ChatInfo{}
+
+		insertedChat, err := handler.mongoColl.Find(selector).Apply(change, foundChat)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 
-		defer func() {
-			err := respAuth.Body.Close()
-			if err != nil {
-				fmt.Println(err) //todo
-				return
+		if foundChat.Id == nil {
+			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
+			if ok && insertedChatId != nil {
+				responce := suckhttp.NewResponse(200, "OK")
+				responce.SetBody(insertedChatId) // TODO: КУДА WRITE?
+				return responce, nil
+			} else {
+				return nil, nil // ??
 			}
-		}()
-		if respAuth.StatusCode != 200 {
-			w.WriteHeader(http.StatusForbidden)
-			return
 		}
 
-		ownerHash := r.Form["hash"][0]
-
-		upsertData := bson.M{"$setOnInsert": bson.M{"users": ownerHash, "type": 0}}
-		upsertSelector := bson.M{"type": 0, "users": ownerHash}
-		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
-		if err != nil {
-			fmt.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		if insertResult.UpsertedId == nil {
-			findResult := &ChatInfo{}
-			err = cfg.mongoColl.Find(bson.M{"type": 0, "users": ownerHash}).One(findResult)
-			if err != nil {
-				fmt.Println(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			if findResult != nil {
-				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
-				return
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
-		if ok {
-			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
-			return
-		}
-
-		w.WriteHeader(http.StatusInternalServerError)
+		responce := suckhttp.NewResponse(200, "OK")
+		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE?
+		return responce, nil
 
 	case "group":
 
-		// --- START REQUEST TO AUTH ---
+		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
 
-		// --- USER'S COOKIE IN REQ COOKIES ---
+		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
 
-		/*reqAuth, err := http.NewRequest("GET", "http://www.URL-TO-AUTH.com/", nil) //TODO: get auth like chelovek
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		reqAuth.AddCookie(cookie)
-
-		client := &http.Client{}
-		respAuth, err := client.Do(reqAuth)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}*/
-
-		// --- REQUEST TO AUTH WITH USER'S JWT IN QUERY ---
-
-		respAuth, err := http.Get(utils.ConcatTwo("http://www.URL-TO-AUTH.com/?jwt=", cookie.Value))
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		defer func() {
-			err := respAuth.Body.Close()
-			if err != nil {
-				fmt.Println(err) //todo
-				return
-			}
-		}()
-		if respAuth.StatusCode != 200 {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		// --- END REQUEST TO AUTH ---
-
-		// --- HASH IN BODY OF RESPONCE ---
-
-		/*	bytes, err := ioutil.ReadAll(respAuth.Body)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			ownerHash := string(bytes)
-			ownerHash = ownerHash*/
-
-		// --- HASH IN JSON IN BODY OF RESPONCE ---
-
-		/*	respAuthBodyDecoded := &ChatCreatorAuthResp{}
-			err := json.NewDecoder(respAuth.Body).Decode(respAuthBodyDecoded)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}*/
-
-		// --- HASH IN FORM IN MAIN REQUEST ---
-
-		ownerHash := r.Form["hash"][0]
-
-		// --- END OF KNOWING USER`S HASH ---
-
-		chatName := r.Form["name"][0]
+		chatName := queryValues.Get("name")
 
 		if chatName == "" {
 			chatName = "Group chat"
 		}
 
-		upsertData := bson.M{"$setOnInsert": bson.M{"users": ownerHash, "type": 2}}
-		upsertSelector := bson.M{"type": 2, "users.0": ownerHash, "name": chatName}
-		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
+		uid := suckutils.GetRandUID(314)
+		change := mgo.Change{
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": ownerHash, "type": 2}},
+			Upsert:    true,
+			ReturnNew: false,
+			Remove:    false,
+		}
+		selector := &bson.M{"type": 2, "users.0": ownerHash, "name": chatName}
+		foundChat := &ChatInfo{}
+
+		insertedChat, err := handler.mongoColl.Find(selector).Apply(change, foundChat)
 		if err != nil {
-			fmt.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 
-		if insertResult.UpsertedId == nil {
-			findResult := &ChatInfo{}
-			err = cfg.mongoColl.Find(bson.M{"type": 0, "users.0": ownerHash, "name": chatName}).One(findResult)
-			if err != nil {
-				fmt.Println(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
+		if foundChat.Id == nil {
+			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
+			if ok && insertedChatId != nil {
+				responce := suckhttp.NewResponse(200, "OK")
+				responce.SetBody(insertedChatId) // TODO: КУДА WRITE?
+				return responce, nil
+			} else {
+				return nil, nil // ??
 			}
-			if findResult != nil {
-				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
-				return
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
-		if ok {
-			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
-			return
 		}
 
-		w.WriteHeader(http.StatusInternalServerError)
+		responce := suckhttp.NewResponse(200, "OK")
+		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE?
+		return responce, nil
 
 	case "ls":
 
-		secondUserHash := r.Form["to"][0]
+		secondUserHash := queryValues.Get("u2")
 		if secondUserHash == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return suckhttp.NewResponse(400, "Miss second user"), nil
 		}
-		// --- START REQUEST TO AUTH ---
 
-		// --- REQUEST TO AUTH WITH KOKI IN COOKIE ---
+		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
 
-		/*reqAuth, err := http.NewRequest("GET", "http://www.URL-TO-AUTH.com/", nil) //TODO: get auth like chelovek
+		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
+
+		uid := suckutils.GetRandUID(314)
+		change := mgo.Change{
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": []string{ownerHash, secondUserHash}, "type": 1}},
+			Upsert:    true,
+			ReturnNew: false,
+			Remove:    false,
+		}
+		selector := &bson.M{"type": 1, "$or": []bson.M{{"users": []string{ownerHash, secondUserHash}}, {"users": []string{secondUserHash, ownerHash}}}}
+		foundChat := &ChatInfo{}
+
+		insertedChat, err := handler.mongoColl.Find(selector).Apply(change, foundChat)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		reqAuth.AddCookie(cookie)
-
-		client := &http.Client{}
-		respAuth, err := client.Do(reqAuth)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}*/
-
-		// --- REQUEST TO AUTH WITH USER'S JWT IN QUERY ---
-
-		respAuth, err := http.Get(utils.ConcatFour("http://www.URL-TO-AUTH.com/?jwt=", cookie.Value, "&to=", r.Form["to"][0]))
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 
-		defer func() {
-			err := respAuth.Body.Close()
-			if err != nil {
-				fmt.Println(err)
-				return
+		if foundChat.Id == nil {
+			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
+			if ok && insertedChatId != nil {
+				responce := suckhttp.NewResponse(200, "OK")
+				responce.SetBody(insertedChatId) // TODO: КУДА WRITE?
+				return responce, nil
+			} else {
+				return nil, nil // ??
 			}
-		}()
-		if respAuth.StatusCode != 200 {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		// --- END REQUEST TO AUTH ---
-
-		// --- RAW STRING IN BODY IN RESPONCE ---
-
-		/*	bytes, err := ioutil.ReadAll(respAuth.Body)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			ownerHash := string(bytes)
-			ownerHash = ownerHash*/
-
-		// --- JSON IN RESPONCE ---
-
-		/*	respAuthBodyDecoded := &ChatCreatorAuthResp{}
-			err := json.NewDecoder(respAuth.Body).Decode(respAuthBodyDecoded)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}*/
-
-		// --- ¯\_(ツ)_/¯ ---
-
-		ownerHash := r.Form["hash"][0]
-
-		// -----------
-
-		upsertData := bson.M{"$setOnInsert": bson.M{"users": []string{ownerHash, secondUserHash}, "type": 1}}
-		upsertSelector := bson.M{"type": 1, "users": bson.M{"$all": []bson.M{{"$elemMatch": bson.M{"$eq": ownerHash}}, {"$elemMatch": bson.M{"$eq": secondUserHash}}}}}
-		insertResult, err := cfg.mongoColl.Upsert(upsertSelector, upsertData)
-		if err != nil {
-			fmt.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
 		}
 
-		if insertResult.UpsertedId == nil {
-			findResult := &ChatInfo{}
-			err = cfg.mongoColl.Find(bson.M{"type": 1, "users": bson.M{"$all": []string{ownerHash, secondUserHash}}}).One(findResult)
-			if err != nil {
-				fmt.Println(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			if findResult != nil {
-				w.Write([]byte(findResult.Id.Hex())) // КУДА WRITE?
-				return
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-
-		chatId, ok := insertResult.UpsertedId.(bson.ObjectId)
-		if ok {
-			w.Write([]byte(chatId.Hex())) // КУДА WRITE?
-			return
-		}
-
-		w.WriteHeader(http.StatusInternalServerError)
+		responce := suckhttp.NewResponse(200, "OK")
+		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE?
+		return responce, nil
 
 	default:
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return suckhttp.NewResponse(400, "Type error"), nil
 	}
 }
 
 func main() {
+	ctx, cancel := httpservice.CreateContextWithInterruptSignal()
+	logger.SetupLogger(ctx, time.Second*2, []logger.LogWriter{logger.NewConsoleLogWriter(logger.DebugLevel)})
+	defer func() {
+		cancel()
+		<-logger.AllLogsFlushed
+	}()
+
+	handler, err := NewCreateChatHandler()
+	if err != nil {
+		logger.Error("Mongo connection", err)
+		return
+	}
+
+	logger.Error("HTTP service", httpservice.ServeHTTPService(ctx, ":8090", handler)) // TODO: отхардкодить порт?
+}
+
+type CreateChatHandler struct {
+	mongoColl *mgo.Collection
+}
+
+func NewCreateChatHandler() (*CreateChatHandler, error) { // порнография?
 	mongoSession, err := mgo.Dial("127.0.0.1")
 
 	if err != nil {
-		fmt.Println(err) //TODO
-		return
+		return nil, err
 	}
 	defer mongoSession.Close()
 
-	mongoCollection := mongoSession.DB("main").C("chats")
-
-	cfg := *&configs{mongoSession: mongoSession, mongoColl: mongoCollection}
-
-	http.HandleFunc("/", cfg.handler)
-	log.Fatal(http.ListenAndServe(":8091", nil))
+	return &CreateChatHandler{mongoColl: mongoSession.DB("main").C("chats")}, nil
 }
