@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +31,10 @@ func (handler *CreateChatHandler) Handle(r *suckhttp.Request) (*suckhttp.Respons
 
 	var token string
 	cookie := r.GetHeader(suckhttp.Cookie)
+	if cookie == "" {
+		response := suckhttp.NewResponse(400, "Bad request")
+		return response, errors.New("Not set cookie token")
+	}
 	cookie = strings.ReplaceAll(cookie, " ", "")
 	cookieValues := strings.Split(cookie, ";")
 	for _, cv := range cookieValues {
@@ -53,7 +62,7 @@ func (handler *CreateChatHandler) Handle(r *suckhttp.Request) (*suckhttp.Respons
 
 		uid := suckutils.GetRandUID(314)
 		change := mgo.Change{
-			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": ownerHash, "type": 0}},
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": []string{ownerHash}, "type": 0}},
 			Upsert:    true,
 			ReturnNew: false,
 			Remove:    false,
@@ -165,25 +174,36 @@ func (handler *CreateChatHandler) Handle(r *suckhttp.Request) (*suckhttp.Respons
 		return responce, nil
 
 	default:
-		return suckhttp.NewResponse(400, "Type error"), nil
+		return suckhttp.NewResponse(400, "Bad request"), errors.New("Type error")
 	}
 }
 
 func main() {
+	port := flag.Int("port", 0, "WebService port")
+	flag.Parse()
+
+	if *port <= 0 {
+		println("Port not set")
+		os.Exit(1)
+	}
+
 	ctx, cancel := httpservice.CreateContextWithInterruptSignal()
-	logger.SetupLogger(ctx, time.Second*2, []logger.LogWriter{logger.NewConsoleLogWriter(logger.DebugLevel)})
+	loggerctx, loggercancel := context.WithCancel(context.Background())
 	defer func() {
 		cancel()
+		loggercancel()
 		<-logger.AllLogsFlushed
 	}()
 
-	handler, err := NewCreateChatHandler("127.0.0.1")
+	logger.SetupLogger(loggerctx, time.Second*10, []logger.LogWriter{logger.NewConsoleLogWriter(logger.DebugLevel)})
+
+	handler, err := NewCreateChatHandler("127.0.0.1:27017")
 	if err != nil {
 		logger.Error("Mongo connection", err)
 		return
 	}
 
-	logger.Error("HTTP service", httpservice.ServeHTTPService(ctx, ":8090", handler)) // TODO: отхардкодить порт?
+	logger.Error("HTTP service", httpservice.ServeHTTPService(ctx, suckutils.ConcatTwo(":", strconv.Itoa(*port)), handler)) // TODO: отхардкодить порт?
 }
 
 type CreateChatHandler struct {
