@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"lib"
 	"net/url"
 	"thin-peak/logs/logger"
@@ -29,7 +28,7 @@ func NewSendMessage(mgoAddr string, mgoColl string, clickhouseAddr string) (*Sen
 
 	mgoSession, err := mgo.Dial(mgoAddr)
 	if err != nil {
-		fmt.Println(err) //TODO
+		logger.Error("Mongo conn", err)
 		return nil, err
 	}
 
@@ -37,7 +36,11 @@ func NewSendMessage(mgoAddr string, mgoColl string, clickhouseAddr string) (*Sen
 
 	chConn := clickhouse.NewConn(clickhouseAddr, clickhouse.NewHttpTransport())
 	//"CREATE TABLE IF NOT EXISTS main.chats (time DateTime,chatID UUID,user String,text String) ENGINE = MergeTree() ORDER BY tuple()"
-
+	err = chConn.Ping()
+	if err != nil {
+		logger.Error("Clickhouse connection ping", err)
+		return nil, err
+	}
 	return &SendMessage{mgoSession: mgoSession, mgoColl: mgoCollection, clickhouseConn: chConn}, nil
 
 }
@@ -53,7 +56,8 @@ func (conf *SendMessage) Handle(r *suckhttp.Request, l *logger.Logger) (w *suckh
 
 	formValues, err := url.ParseQuery(string(r.Body))
 	if err != nil {
-		return nil, err
+		w.SetStatusCode(400, "Bad Request")
+		return
 	}
 
 	text := formValues.Get("text")
@@ -64,7 +68,7 @@ func (conf *SendMessage) Handle(r *suckhttp.Request, l *logger.Logger) (w *suckh
 	}
 
 	cookie := lib.GetCookie(r.GetHeader(suckhttp.Cookie), "koki")
-	if cookie != nil {
+	if cookie == nil {
 		w.SetStatusCode(401, "Unauthorized")
 		return
 	}
