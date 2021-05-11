@@ -1,6 +1,28 @@
 package main
 
-// Я ВЕРЮ ,В ТО ЧТО ЖЕРТВЫ НЕ НАПРАСНЫ.
-// МЫ ВЫСТОИМ, ВСЕ ВМЕСТЕ - ПОБЕДИМ.
-// РОДИТСЯ НОВЫЙ delete В ДУШЕ- ПРЕКРАСНЫЙ.
-// А ТЕНЬ ВОЙНЫ, РАСТАЕТ СЛОВНО ДЫМ.
+import (
+	"context"
+	"lib"
+	"thin-peak/httpservice"
+)
+
+type config struct {
+	Configurator string
+	Listen       string
+	MgoAddr      string
+	MgoTable     string
+}
+
+func (c *config) GetListenAddress() string {
+	return c.Listen
+}
+func (c *config) GetConfiguratorAddress() string {
+	return c.Configurator
+}
+func (c *config) CreateHandler(ctx context.Context, connectors map[httpservice.ServiceName]*httpservice.InnerService) (httpservice.HttpService, error) {
+	return NewDeleteChat(c.MgoAddr, c.MgoTable)
+}
+
+func main() {
+	httpservice.InitNewService(lib.ServiceNameDeleteChat, false, 5, &config{})
+}

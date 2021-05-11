@@ -1,21 +1,15 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"flag"
 	"lib"
 	"net/url"
-	"os"
-	"strconv"
-	"time"
+
+	"thin-peak/logs/logger"
 
 	"github.com/big-larry/mgo"
 	"github.com/big-larry/mgo/bson"
 	"github.com/big-larry/suckhttp"
-	"github.com/big-larry/suckutils"
-	"github.com/thin-peak/httpservice"
-	"github.com/thin-peak/logger"
+	"github.com/rs/xid"
 )
 
 type CreateChat struct {
@@ -23,13 +17,14 @@ type CreateChat struct {
 	mgoColl    *mgo.Collection
 }
 type chatInfo struct {
-	Id    bson.ObjectId `bson:"_id"`
-	Users []string      `bson:"users"`
-	Name  string        `bson:"name"`
-	Type  int           `bson:"type"`
+	//Id bson.ObjectId `bson:"_id"`
+	Id    string   `bson:"_id"`
+	Users []string `bson:"users"`
+	Name  string   `bson:"name"`
+	Type  int      `bson:"type"`
 }
 
-func NewSendMessage(mgoAddr string, mgoColl string) (*CreateChat, error) {
+func NewCreateChat(mgoAddr string, mgoColl string) (*CreateChat, error) {
 
 	mgoSession, err := mgo.Dial(mgoAddr)
 	if err != nil {
@@ -48,191 +43,123 @@ func (conf *CreateChat) Close() error {
 	return nil
 }
 
-func (conf *CreateChat) Handle(r *suckhttp.Request, l *logger.Logger) (w *suckhttp.Response, err error) {
+func getChatRandId() string {
+	return xid.New().String()
+}
 
-	w = &suckhttp.Response{}
+func (conf *CreateChat) Handle(r *suckhttp.Request, l *logger.Logger) (*suckhttp.Response, error) {
 
 	cookie := lib.GetCookie(r.GetHeader(suckhttp.Cookie), "koki")
 	if cookie == nil {
-		response := suckhttp.NewResponse(400, "Bad request")
-		return response, errors.New("Not set cookie token")
+		return suckhttp.NewResponse(401, "Unauthorized"), nil
 	}
 
-	queryValues, err := url.ParseQuery(r.Uri.RawQuery)
+	formValues, err := url.ParseQuery(string(r.Body))
 	if err != nil {
-		w.SetStatusCode(400, "Bad Request")
-		return
+		return suckhttp.NewResponse(400, "Bad request"), err
 	}
-	chatType := queryValues.Get("type")
 
+	ownerHash := formValues.Get("userId") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
+	if len(ownerHash) != 32 {
+		return suckhttp.NewResponse(400, "Bad request"), nil
+	}
+
+	chatType := formValues.Get("type")
 	switch chatType {
-	case "0":
+	case "1": // сам с собой
 
-		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
+		insertId := getChatRandId()
 
-		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
-
-		uid := suckutils.GetRandUID(314)
 		change := mgo.Change{
-			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": []string{ownerHash}, "type": 0}},
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": insertId, "users": ownerHash, "type": 1}},
 			Upsert:    true,
 			ReturnNew: false,
 			Remove:    false,
 		}
-		selector := &bson.M{"type": 0, "users": ownerHash}
+		selector := &bson.M{"type": 1, "users": ownerHash}
 
-		foundedChat := &chatInfo{}
-		insertedChat, err := conf.mgoColl.Find(selector).Apply(change, foundedChat)
-		if err != nil { // TODO: ПРОВЕРИТЬ ОШИБКУ mgo.ErrNotFound
-			logger.Error("Mongo insert", err)
+		foundChat := &chatInfo{}
+		_, err := conf.mgoColl.Find(selector).Apply(change, &foundChat)
+		if err != nil {
 			return nil, err
 		}
 
-		if foundedChat.Id == "" { // TODO: И ЕСЛИ ВЫШИБАЕТ ОШИБКУ ПИХАЕМ ЕЕ СЮДА
-			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
-			if ok && insertedChatId != nil {
-				w.SetStatusCode(200, "OK")
-				w.SetBody(insertedChatId) // TODO: КУДА WRITE? Редирект?
-				return w, nil
-			} else {
-				logger.Err
-			}
+		if foundChat.Id == "" {
+			foundChat.Id = insertId
+			// resp := suckhttp.NewResponse(200, "OK")
+			// resp.SetBody([]byte(insertId)) // TODO: КУДА WRITE? Редирект?
+			// return resp, nil
 		}
 
-		responce := suckhttp.NewResponse(200, "OK")
-		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE? Редирект?
-		return responce, nil
+		resp := suckhttp.NewResponse(200, "OK")
+		resp.SetBody([]byte(foundChat.Id)) // TODO: КУДА WRITE? Редирект?
+		return resp, nil
 
-	case "group":
+	case "3": // групповой
 
-		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
-
-		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
-
-		chatName := queryValues.Get("name")
-
+		chatName := formValues.Get("name")
 		if chatName == "" {
 			chatName = "Group chat"
 		}
 
-		uid := suckutils.GetRandUID(314)
+		insertId := getChatRandId()
+
 		change := mgo.Change{
-			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": ownerHash, "type": 2}},
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": insertId, "users": []string{ownerHash}, "type": 3}},
 			Upsert:    true,
 			ReturnNew: false,
 			Remove:    false,
 		}
-		selector := &bson.M{"type": 2, "users.0": ownerHash, "name": chatName}
-		foundChat := &ChatInfo{}
+		selector := &bson.M{"type": 3, "users.0": ownerHash, "name": chatName}
 
-		insertedChat, err := handler.mongoColl.Find(selector).Apply(change, foundChat)
+		foundChat := &chatInfo{}
+
+		_, err := conf.mgoColl.Find(selector).Apply(change, &foundChat)
 		if err != nil {
 			return nil, err
 		}
 
-		if foundChat.Id == nil {
-			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
-			if ok && insertedChatId != nil {
-				responce := suckhttp.NewResponse(200, "OK")
-				responce.SetBody(insertedChatId) // TODO: КУДА WRITE?
-				return responce, nil
-			} else {
-				return nil, nil // ??
-			}
+		if foundChat.Id == "" {
+			foundChat.Id = insertId
 		}
 
 		responce := suckhttp.NewResponse(200, "OK")
-		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE?
+		responce.SetBody([]byte(foundChat.Id)) // TODO: КУДА WRITE?
 		return responce, nil
 
-	case "ls":
+	case "2": // между двумя
 
-		secondUserHash := queryValues.Get("u2")
-		if secondUserHash == "" {
-			return suckhttp.NewResponse(400, "Miss second user"), nil
+		secondUserHash := formValues.Get("seconduser")
+		if len(secondUserHash) != 32 {
+			return suckhttp.NewResponse(400, "Bad request"), nil
 		}
 
 		// КУДА ТО ТАМ АВТОРИЗУЕМСЯ ¯\_(ツ)_/¯
 
-		ownerHash := queryValues.Get("u1") // TODO: ОТКУДА ТО ПОЛУЧАЕМ ХЭШ ¯\_(ツ)_/¯
-
-		uid := suckutils.GetRandUID(314)
+		insertId := getChatRandId()
 		change := mgo.Change{
-			Update:    bson.M{"$setOnInsert": bson.M{"_id": uid, "users": []string{ownerHash, secondUserHash}, "type": 1}},
+			Update:    bson.M{"$setOnInsert": bson.M{"_id": insertId, "users": []string{ownerHash, secondUserHash}, "type": 2}},
 			Upsert:    true,
 			ReturnNew: false,
 			Remove:    false,
 		}
-		selector := &bson.M{"type": 1, "$or": []bson.M{{"users": []string{ownerHash, secondUserHash}}, {"users": []string{secondUserHash, ownerHash}}}}
-		foundChat := &ChatInfo{}
+		selector := &bson.M{"type": 2, "$or": []bson.M{{"users": []string{ownerHash, secondUserHash}}, {"users": []string{secondUserHash, ownerHash}}}}
 
-		insertedChat, err := handler.mongoColl.Find(selector).Apply(change, foundChat)
+		foundChat := &chatInfo{}
+		_, err := conf.mgoColl.Find(selector).Apply(change, &foundChat)
 		if err != nil {
 			return nil, err
 		}
 
-		if foundChat.Id == nil {
-			insertedChatId, ok := insertedChat.UpsertedId.([]byte)
-			if ok && insertedChatId != nil {
-				responce := suckhttp.NewResponse(200, "OK")
-				responce.SetBody(insertedChatId) // TODO: КУДА WRITE?
-				return responce, nil
-			} else {
-				return nil, nil // ??
-			}
+		if foundChat.Id == "" {
+			foundChat.Id = insertId
 		}
 
 		responce := suckhttp.NewResponse(200, "OK")
-		responce.SetBody(foundChat.Id) // TODO: КУДА WRITE?
+		responce.SetBody([]byte(foundChat.Id)) // TODO: КУДА WRITE?
 		return responce, nil
 
 	default:
-		return suckhttp.NewResponse(400, "Bad request"), errors.New("Type error")
+		return suckhttp.NewResponse(400, "Bad request"), nil
 	}
-}
-
-func main() {
-	port := flag.Int("port", 0, "WebService port")
-	flag.Parse()
-
-	if *port <= 0 {
-		println("Port not set")
-		os.Exit(1)
-	}
-
-	ctx, cancel := httpservice.CreateContextWithInterruptSignal()
-	loggerctx, loggercancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		loggercancel()
-		<-logger.AllLogsFlushed
-	}()
-
-	logger.SetupLogger(loggerctx, time.Second*10, []logger.LogWriter{logger.NewConsoleLogWriter(logger.DebugLevel)})
-
-	handler, err := NewCreateChatHandler("127.0.0.1:27017")
-	if err != nil {
-		logger.Error("Mongo connection", err)
-		return
-	}
-
-	logger.Error("HTTP service", httpservice.ServeHTTPService(ctx, suckutils.ConcatTwo(":", strconv.Itoa(*port)), handler)) // TODO: отхардкодить порт?
-}
-
-type CreateChatHandler struct {
-	mongoColl *mgo.Collection
-}
-
-func (handler *CreateChatHandler) Close() {
-	handler.mongoColl.Database.Session.Close()
-}
-
-func NewCreateChatHandler(connectionString string) (*CreateChatHandler, error) { // порнография?
-	mongoSession, err := mgo.Dial(connectionString)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &CreateChatHandler{mongoColl: mongoSession.DB("main").C("chats")}, nil
 }

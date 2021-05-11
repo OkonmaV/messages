@@ -23,9 +23,9 @@ func (c *config) GetConfiguratorAddress() string {
 }
 func (c *config) CreateHandler(ctx context.Context, connectors map[httpservice.ServiceName]*httpservice.InnerService) (httpservice.HttpService, error) {
 
-	return NewSendMessage(c.MgoAddr, c.MgoColl, c.ClickhouseAddr)
+	return NewSendMessage(c.MgoAddr, c.MgoColl, c.ClickhouseAddr, c.ClickhouseTable)
 }
 
 func main() {
-	httpservice.InitNewService(lib.ServiceNameAuthentication, false, 5, &config{})
+	httpservice.InitNewService(lib.ServiceNameSendMessage, false, 5, &config{})
 }
